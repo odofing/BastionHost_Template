@@ -1,0 +1,186 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >- 
+ 
+  Resources created
+  1 public subnets for web apps
+  1 public subnet for bastion host
+  1 
+ 
+  1 internet gateway
+
+
+  
+
+Parameters:
+  EnvironmentName:
+    Description: An environment name that is prefixed to resource names
+    Type: String
+    Default: Bation Host Demo
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Please enter the name of the SSH Key Pair for remote access to EC2 instances
+
+  
+  VpcCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+    Default: 10.100.0.0/16
+
+  PublicSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+    Type: String
+    Default: 10.100.1.0/24
+  
+  AMI:
+    Description: Please enter AMI for your EC2 instance
+    Type: String
+
+  PrivateSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+    Type: String
+    Default: 10.100.11.0/24
+
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: VPC
+    Properties:
+      Tags:
+        - Key: Name
+          Value: InternetGateway
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    DependsOn: InternetGateway
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]
+      CidrBlock: !Ref PublicSubnet1CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: Public-Web-Subnet
+
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: Private-Subnet
+  
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: PublicRouteTable
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    DependsOn: DefaultPublicRoute
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+
+  BastionHostSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: BastionHostSG
+      GroupDescription: "Security group for Bastion Host"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          CidrIp: 0.0.0.0/0
+          FromPort: 22
+          ToPort: 22
+
+  PrivateInstanceSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: PrivateInstance-SG
+      GroupDescription: "Allow SSH from local machine"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+       -  IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId: !Ref BastionHostSG
+
+  BastionHost:
+    Type: AWS::EC2::Instance
+    DependsOn: BastionHostSG
+    Properties:
+      ImageId: !Ref AMI
+      InstanceType: t2.micro
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          AssociatePublicIpAddress: true
+          SubnetId: !GetAtt PublicSubnet1.SubnetId
+          GroupSet:
+            - !GetAtt BastionHostSG.GroupId
+      Tags: 
+        - Key: Name
+          Value: PublicServer
+
+
+  PrivateInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: PrivateInstanceSG
+    Properties:
+      ImageId: !Ref AMI
+      KeyName: !Ref KeyPairName
+      InstanceType: t2.micro
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          AssociatePublicIpAddress: false
+          SubnetId: !GetAtt PrivateSubnet1.SubnetId
+          GroupSet:
+            - !GetAtt PrivateInstanceSG.GroupId
+      Tags: 
+        - Key: Name
+          Value: Privateinstance
+
+  
+
+
+Outputs:
+  BastionHostPIP:
+    Description: The Public IP Address of the Bastion Host
+    Value: !GetAtt BastionHost.PublicIp  
+  PrivateIP:
+    Description: The Private Ip of the private subnet
+    Value: !GetAtt PrivateInstance.PrivateIp  
+
